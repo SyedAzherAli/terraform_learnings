@@ -1,0 +1,7 @@
+---
+- name: Run script on multiple instances
+  hosts: app_servers
+  become: yes  
+  tasks:
+    - name: Run the script on remote instances
+      script: phpMyAdmin_setup.sh

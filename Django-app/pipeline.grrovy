@@ -1,0 +1,84 @@
+pipeline {
+    agent any
+    environment {
+        GIT_REPO = 'https://github.com/SyedAzherAli/django-app.git'  
+        DB_NAME = "Django_backend"
+        DB_USER = "Django_usr"
+        DB_PASSWORD = "Django_pwd"
+        DB_HOST = "" // RDS endpoint
+        DB_PORT = "5432"
+        AWS_ACCESS_KEY_ID = ""
+        AWS_SECRET_ACCESS_KEY = ""
+        S3_BUCKET = "django-application-bucket-latest-2024"
+        REGION_NAME = "ap-south-1"
+        AWS_CREDENTIALS_ID = "aws-credentials"
+        APPLICATION_NAME = "django-app"
+        DEPLOYMENT_GROUP = "django-app-DG"
+    }
+    stages {
+        stage('Remove old repo') {
+        
+            steps {
+                sh '''  
+                rm -rf *
+                '''
+            }
+        }
+        stage('Clone repository') {
+            steps { 
+                git branch: "main", url: "${GIT_REPO}"
+            }
+        }
+        stage('Configure Django for RDS') {
+            steps {
+                sh '''
+                sed -i "s/'NAME': '.*'/'NAME': '${DB_NAME}'/" backend/settings.py
+                sed -i "s/'USER': '.*'/'USER': '${DB_USER}'/" backend/settings.py
+                sed -i "s/'PASSWORD': '.*'/'PASSWORD': '${DB_PASSWORD}'/" backend/settings.py
+                sed -i "s/'HOST': '.*'/'HOST': '${DB_HOST}'/" backend/settings.py
+                sed -i "s/'PORT': '.*'/'PORT': '${DB_PORT}'/" backend/settings.py
+                '''
+            }
+        }
+        stage('Configure Django for S3') {
+            steps {
+                sh '''
+                sed -i "s/AWS_ACCESS_KEY_ID = .*/AWS_ACCESS_KEY_ID = '${AWS_ACCESS_KEY_ID}'/" backend/settings.py
+                sed -i "s/AWS_SECRET_ACCESS_KEY = .*/AWS_SECRET_ACCESS_KEY = '${AWS_SECRET_ACCESS_KEY}'/" backend/settings.py
+                sed -i "s/AWS_STORAGE_BUCKET_NAME = .*/AWS_STORAGE_BUCKET_NAME = '${S3_BUCKET}'/" backend/settings.py
+                sed -i "s/AWS_S3_REGION_NAME = .*/AWS_S3_REGION_NAME = '${REGION_NAME}'/" backend/settings.py
+                '''
+            }
+        }
+        stage('Package Application') {
+            steps {
+                sh '''
+                rm -rf ../deploy
+                rm -rf deploy
+                mkdir ../deploy
+                cp -R * ../deploy/  
+                mv ../deploy ${PWD}
+                zip -r deploy.zip deploy/
+                '''
+                archiveArtifacts artifacts: 'deploy.zip', fingerprint: true
+            }
+        }
+        stage('Upload to S3') {
+            steps {
+                withAWS(credentials: "${AWS_CREDENTIALS_ID}", region: "${REGION_NAME}") {
+                    s3Upload(bucket: "${S3_BUCKET}", file: 'deploy.zip', path: 'deploy.zip')
+                }
+            }
+        }
+       stage('Deploy to AWS CodeDeploy') {
+            steps {
+                sh '''
+                aws deploy create-deployment \
+                --application-name $APPLICATION_NAME \
+                --deployment-group-name $DEPLOYMENT_GROUP \
+                --s3-location bucket=$S3_BUCKET,bundleType=zip,key=deploy.zip
+                '''
+            }
+        }
+    }
+}
